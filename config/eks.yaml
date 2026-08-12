@@ -1,0 +1,54 @@
+# Helm values overlay for AWS EKS + S3 with IRSA.
+#
+#   helm upgrade --install dtr-runtime helm/dtr-runtime -n dtr -f config/eks.yaml \
+#     --set-string serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::<ACCOUNT>:role/dtr-s3 \
+#     --set env.S3_BUCKET=my-dtr-bucket
+#
+# Credentials come from IRSA (the SDK default chain); no keys in config.
+
+replicaCount: 2
+
+serviceAccount:
+  create: true
+  name: dtr-runtime
+  annotations: {}   # set eks.amazonaws.com/role-arn at install time
+
+config:
+  runtime:
+    grpc_bind: "0.0.0.0:50051"
+    log_level: "info"
+    log_json: true
+  storage:
+    backend: s3
+    s3:
+      endpoint: null           # real AWS S3
+      region: us-east-1
+      force_path_style: false
+      allow_http: false
+  coordinator:
+    heartbeat_interval_ms: 5000
+    missed_heartbeats_allowed: 3
+    lease_ttl_ms: 60000
+    default_shards_per_lease: 1
+  checkpoint:
+    quorum:
+      policy: all_ranks
+    barrier_timeout_ms: 600000
+    default_chunk_bytes: 67108864
+    gc_orphan_after_ms: 3600000
+  io:
+    cache_bytes: 8589934592
+    prefetch_depth: 8
+  observability:
+    metrics_bind: "0.0.0.0:9090"
+
+env:
+  S3_BUCKET: dtr
+  S3_REGION: us-east-1
+
+resources:
+  requests:
+    cpu: "2"
+    memory: 10Gi
+  limits:
+    memory: 12Gi
