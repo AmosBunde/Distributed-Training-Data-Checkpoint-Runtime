@@ -1,0 +1,290 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "DTR System Architecture",
+    "subtitle": "Distributed Training Data & Checkpoint Runtime \u2014 control plane, data plane, storage",
+    "output": "system-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "control-plane",
+        "label": "Control plane",
+        "focus": [
+          "workers",
+          "sdk",
+          "grpc",
+          "coordinator"
+        ],
+        "note": "Registration, heartbeats, shard leases, and checkpoint barriers flow through the coordinator."
+      },
+      {
+        "id": "read-path",
+        "label": "Shard read path",
+        "focus": [
+          "sdk",
+          "grpc",
+          "io",
+          "storage"
+        ],
+        "note": "DataService reads go through the IO engine's LRU cache and prefetcher before touching storage."
+      },
+      {
+        "id": "checkpoint-path",
+        "label": "Checkpoint path",
+        "focus": [
+          "sdk",
+          "grpc",
+          "ckpt",
+          "storage"
+        ],
+        "note": "Chunks land in tmp/, are verified against SHA-256 reports, then a manifest publish makes the checkpoint visible."
+      },
+      {
+        "id": "observability",
+        "label": "Observability",
+        "focus": [
+          "grpc",
+          "prometheus",
+          "grafana"
+        ],
+        "note": "Prometheus scrapes /metrics on :9090; Grafana ships with a provisioned runtime dashboard."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "workers",
+      "type": "external",
+      "label": "Training Workers",
+      "sublabel": "PyTorch / JAX ranks",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "sdk",
+      "type": "frontend",
+      "label": "Python SDK",
+      "sublabel": "dtr.RuntimeClient",
+      "pos": [
+        260,
+        300
+      ],
+      "size": [
+        140,
+        64
+      ],
+      "tag": "heartbeats"
+    },
+    {
+      "id": "grpc",
+      "type": "backend",
+      "label": "gRPC API",
+      "sublabel": "tonic :50051",
+      "pos": [
+        480,
+        300
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "3 services"
+    },
+    {
+      "id": "coordinator",
+      "type": "backend",
+      "label": "Coordinator",
+      "sublabel": "membership \u00b7 leases \u00b7 barriers",
+      "pos": [
+        730,
+        130
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "io",
+      "type": "backend",
+      "label": "IO Engine",
+      "sublabel": "LRU cache + prefetch",
+      "pos": [
+        730,
+        300
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "ckpt",
+      "type": "backend",
+      "label": "Checkpoint Store",
+      "sublabel": "manifests \u00b7 verify \u00b7 GC",
+      "pos": [
+        730,
+        470
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "Object Storage",
+      "sublabel": "S3 / MinIO / FS",
+      "pos": [
+        1000,
+        380
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "object_store"
+    },
+    {
+      "id": "prometheus",
+      "type": "external",
+      "label": "Prometheus",
+      "sublabel": "scrape :9090",
+      "pos": [
+        480,
+        470
+      ],
+      "size": [
+        140,
+        64
+      ]
+    },
+    {
+      "id": "grafana",
+      "type": "external",
+      "label": "Grafana",
+      "sublabel": "DTR dashboard",
+      "pos": [
+        260,
+        470
+      ],
+      "size": [
+        140,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "runtime-server (single binary)",
+      "wraps": [
+        "grpc",
+        "coordinator",
+        "io",
+        "ckpt"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "workers-sdk",
+      "from": "workers",
+      "to": "sdk",
+      "label": "training loop",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sdk-grpc",
+      "from": "sdk",
+      "to": "grpc",
+      "label": "gRPC",
+      "variant": "emphasis"
+    },
+    {
+      "id": "grpc-coordinator",
+      "from": "grpc",
+      "to": "coordinator",
+      "label": "leases \u00b7 barriers",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "grpc-io",
+      "from": "grpc",
+      "to": "io",
+      "label": "reads"
+    },
+    {
+      "id": "grpc-ckpt",
+      "from": "grpc",
+      "to": "ckpt",
+      "label": "chunk uploads"
+    },
+    {
+      "id": "io-storage",
+      "from": "io",
+      "to": "storage",
+      "label": "GET / range"
+    },
+    {
+      "id": "ckpt-storage",
+      "from": "ckpt",
+      "to": "storage",
+      "label": "PUT tmp \u2192 manifest"
+    },
+    {
+      "id": "prom-grpc",
+      "from": "prometheus",
+      "to": "grpc",
+      "label": "/metrics",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "grafana-prom",
+      "from": "grafana",
+      "to": "prometheus",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Control plane",
+      "items": [
+        "Session tokens rotate on re-registration",
+        "TTL shard leases return to the pool on expiry",
+        "Barriers commit on quorum or abort on deadline"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Data plane",
+      "items": [
+        "Byte-budgeted LRU cache with single-flight dedup",
+        "Sequential prefetch matches contiguous lease grants",
+        "Workers need no storage credentials"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Crash safety",
+      "items": [
+        "Chunks upload to tmp/ckpt-step-N/",
+        "SHA-256 verified before manifest publish",
+        "A checkpoint exists iff its manifest exists"
+      ]
+    }
+  ]
+}

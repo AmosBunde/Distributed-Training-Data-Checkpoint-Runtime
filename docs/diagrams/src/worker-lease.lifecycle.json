@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Worker & Lease Lifecycle",
+    "subtitle": "State machine for one training worker: registration, leases, barriers, failure recovery",
+    "output": "worker-lease-lifecycle.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Happy path",
+        "focus": [
+          "registered",
+          "leased",
+          "reading",
+          "checkpointing",
+          "done"
+        ],
+        "note": "Register, lease a shard range, read, hit the checkpoint barrier, finish the epoch."
+      },
+      {
+        "id": "liveness",
+        "label": "Liveness failures",
+        "focus": [
+          "reading",
+          "evicted",
+          "registered"
+        ],
+        "note": "Missed heartbeats evict the worker; re-registration rotates the session token."
+      },
+      {
+        "id": "fencing",
+        "label": "Lease fencing",
+        "focus": [
+          "reading",
+          "expired",
+          "leased"
+        ],
+        "note": "An expired lease returns shards to the pool; the worker must acquire a fresh lease."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Worker phases"
+    },
+    {
+      "id": "recovery",
+      "label": "Recovery loop"
+    }
+  ],
+  "states": [
+    {
+      "id": "registered",
+      "type": "start",
+      "label": "Registered",
+      "sublabel": "session token issued",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "entry"
+    },
+    {
+      "id": "leased",
+      "type": "active",
+      "label": "Holding Lease",
+      "sublabel": "shards [begin, end)",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "TTL"
+    },
+    {
+      "id": "reading",
+      "type": "active",
+      "label": "Reading Shards",
+      "sublabel": "cache + prefetch",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "train"
+    },
+    {
+      "id": "checkpointing",
+      "type": "decision",
+      "label": "Checkpoint Barrier",
+      "sublabel": "upload + report",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "quorum"
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "label": "Epoch Complete",
+      "sublabel": "lease released",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "exit"
+    },
+    {
+      "id": "expired",
+      "type": "failure",
+      "label": "Lease Expired",
+      "sublabel": "shards reassigned",
+      "lane": "recovery",
+      "col": 0,
+      "tag": "fenced"
+    },
+    {
+      "id": "evicted",
+      "type": "failure",
+      "label": "Evicted",
+      "sublabel": "missed heartbeats",
+      "lane": "recovery",
+      "col": 1,
+      "tag": "token rotated"
+    },
+    {
+      "id": "ckptaborted",
+      "type": "failure",
+      "label": "Checkpoint Aborted",
+      "sublabel": "deadline / verify fail",
+      "lane": "recovery",
+      "col": 2,
+      "tag": "resume"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "ttl-lapse",
+      "from": "leased",
+      "to": "expired",
+      "variant": "security"
+    },
+    {
+      "id": "fresh-lease",
+      "from": "expired",
+      "to": "leased",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "bottom"
+    },
+    {
+      "id": "stall-evict",
+      "from": "reading",
+      "to": "evicted",
+      "variant": "security"
+    },
+    {
+      "id": "reregister",
+      "from": "evicted",
+      "to": "registered",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          556,
+          390
+        ],
+        [
+          20,
+          390
+        ],
+        [
+          20,
+          260
+        ],
+        [
+          94,
+          260
+        ]
+      ]
+    },
+    {
+      "id": "barrier-fail",
+      "from": "checkpointing",
+      "to": "ckptaborted",
+      "variant": "security"
+    },
+    {
+      "id": "resume-training",
+      "from": "ckptaborted",
+      "to": "reading",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Happy path",
+      "items": [
+        "Five ordered phases from registration to epoch completion",
+        "Heartbeats ride alongside every phase",
+        "Leases renew while the worker reads"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Liveness",
+      "items": [
+        "Deadline = heartbeat interval \u00d7 (missed + 1)",
+        "Eviction cascades into lease revocation",
+        "Re-registration rotates the session token (fences zombies)"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Recovery is protocol-driven",
+      "items": [
+        "Expired leases: acquire a fresh one, never resume old shards",
+        "Aborted checkpoints: training resumes; tmp data is GC'd",
+        "No operator action needed for any recovery arc"
+      ]
+    }
+  ]
+}

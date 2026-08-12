@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Training-Step Data Flow",
+    "subtitle": "How shard bytes travel from object storage to the training step, governed by leases",
+    "output": "training-step-dataflow.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "hot-path",
+        "label": "Hot read path",
+        "focus": [
+          "shards",
+          "io",
+          "datasvc",
+          "sdk",
+          "gpu"
+        ],
+        "note": "Shard bytes flow storage \u2192 cache \u2192 streamed frames \u2192 batches, left to right."
+      },
+      {
+        "id": "lease-overlay",
+        "label": "Lease control overlay",
+        "focus": [
+          "coord",
+          "sdk"
+        ],
+        "note": "The coordinator's TTL lease grants decide which shard indices each worker may read."
+      }
+    ],
+    "viewBox": [
+      1200,
+      760
+    ]
+  },
+  "stages": [
+    {
+      "label": "Storage"
+    },
+    {
+      "label": "Data Plane"
+    },
+    {
+      "label": "gRPC API"
+    },
+    {
+      "label": "Worker"
+    },
+    {
+      "label": "Training"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "shards",
+      "type": "database",
+      "label": "Dataset Shards",
+      "sublabel": "s3://\u2026/datasets/",
+      "stage": 0,
+      "row": 2,
+      "tag": "webdataset"
+    },
+    {
+      "id": "io",
+      "type": "backend",
+      "label": "IO Engine",
+      "sublabel": "LRU cache \u00b7 prefetch",
+      "stage": 1,
+      "row": 2,
+      "tag": "single-flight"
+    },
+    {
+      "id": "coord",
+      "type": "backend",
+      "label": "Coordinator",
+      "sublabel": "shard lease table",
+      "stage": 2,
+      "row": 0,
+      "tag": "TTL leases"
+    },
+    {
+      "id": "datasvc",
+      "type": "backend",
+      "label": "DataService",
+      "sublabel": "server-streamed frames",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "sdk",
+      "type": "frontend",
+      "label": "dtr SDK",
+      "sublabel": "read_object()",
+      "stage": 3,
+      "row": 2,
+      "tag": "rank r"
+    },
+    {
+      "id": "gpu",
+      "type": "external",
+      "label": "Training Step",
+      "sublabel": "batch \u2192 forward/backward",
+      "stage": 4,
+      "row": 2
+    }
+  ],
+  "flows": [
+    {
+      "id": "shard-get",
+      "from": "shards",
+      "to": "io",
+      "label": "GET / range read",
+      "classification": "shard bytes",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cached-bytes",
+      "from": "io",
+      "to": "datasvc",
+      "label": "cached bytes",
+      "classification": "zero-copy slices",
+      "variant": "emphasis"
+    },
+    {
+      "id": "framed-stream",
+      "from": "datasvc",
+      "to": "sdk",
+      "label": "1 MiB frames",
+      "classification": "gRPC stream",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "id": "batches",
+      "from": "sdk",
+      "to": "gpu",
+      "label": "batches",
+      "classification": "training input",
+      "variant": "emphasis"
+    },
+    {
+      "id": "lease-grant",
+      "from": "coord",
+      "to": "sdk",
+      "label": "lease [begin, end)",
+      "classification": "control",
+      "variant": "dashed",
+      "toSide": "top"
+    },
+    {
+      "id": "prefetch-hint",
+      "from": "sdk",
+      "to": "io",
+      "label": "prefetch hints",
+      "classification": "control",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          745,
+          540
+        ],
+        [
+          315,
+          540
+        ]
+      ],
+      "labelAt": [
+        530,
+        528
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Hot path",
+      "items": [
+        "Contiguous lease ranges keep reads sequential",
+        "Cache hits are pointer clones, never memcpy",
+        "16 concurrent misses on one key = 1 backend GET"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Lease control",
+      "items": [
+        "Coordinator grants half-open shard ranges with a TTL",
+        "Expired leases return shards to the epoch pool",
+        "renewed=false fences a worker off reassigned shards"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Prefetch",
+      "items": [
+        "SDK hints upcoming keys on every read",
+        "IO engine warms up to prefetch_depth objects",
+        "Epoch starts avoid a thundering herd via single-flight"
+      ]
+    }
+  ]
+}
