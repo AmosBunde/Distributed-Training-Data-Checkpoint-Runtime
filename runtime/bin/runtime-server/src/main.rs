@@ -73,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
                     .coordinator
                     .leases
                     .revoke_worker(&worker.worker_id);
+                sweeper_state.metrics.worker_evictions_total.inc();
                 tracing::warn!(
                     worker_id = %worker.worker_id,
                     rank = worker.rank,
@@ -82,13 +83,31 @@ async fn main() -> anyhow::Result<()> {
             }
             let expired = sweeper_state.coordinator.leases.expire_due_leases();
             if !expired.is_empty() {
+                sweeper_state
+                    .metrics
+                    .lease_expirations_total
+                    .inc_by(expired.len() as u64);
                 tracing::info!(
                     count = expired.len(),
                     "expired shard leases returned to pool"
                 );
             }
+            sweeper_state.metrics.sample_state(&sweeper_state);
         }
     });
+
+    // Prometheus /metrics endpoint (optional).
+    if let Some(metrics_bind) = cfg.observability.metrics_bind.clone() {
+        let metrics = Arc::clone(&state.metrics);
+        let metrics_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(e) =
+                dtr_api::metrics::serve_metrics(metrics_bind, metrics, metrics_state).await
+            {
+                tracing::error!(error = %e, "metrics endpoint failed");
+            }
+        });
+    }
 
     let addr: std::net::SocketAddr = cfg
         .runtime

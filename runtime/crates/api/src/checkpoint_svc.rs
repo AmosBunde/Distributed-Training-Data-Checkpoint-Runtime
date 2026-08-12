@@ -146,77 +146,14 @@ impl CheckpointService for CheckpointSvc {
         &self,
         request: Request<CommitCheckpointRequest>,
     ) -> Result<Response<CommitCheckpointResponse>, Status> {
-        let req = request.into_inner();
-        self.state
-            .auth(&req.worker_id, &req.session_token)
-            .map_err(to_status)?;
-        let token = CheckpointToken::new(&req.checkpoint_token);
-        let barrier = self
-            .state
-            .coordinator
-            .barriers
-            .get(&token)
-            .map_err(to_status)?;
-
-        match barrier.status {
-            BarrierStatus::Pending => Ok(Response::new(CommitCheckpointResponse {
-                status: CommitStatus::Pending as i32,
-                manifest_key: String::new(),
-            })),
-            BarrierStatus::Aborted => Ok(Response::new(CommitCheckpointResponse {
-                status: CommitStatus::Aborted as i32,
-                manifest_key: String::new(),
-            })),
-            BarrierStatus::Committed => {
-                // Idempotent re-commit: return the already-published manifest.
-                let target = self.state.target(&barrier.target_id).map_err(to_status)?;
-                Ok(Response::new(CommitCheckpointResponse {
-                    status: CommitStatus::Committed as i32,
-                    manifest_key: dtr_checkpoint::layout::manifest_key(
-                        &target.prefix,
-                        barrier.step,
-                    ),
-                }))
-            }
-            BarrierStatus::Ready => {
-                let target = self.state.target(&barrier.target_id).map_err(to_status)?;
-                let chunks = self.state.reported_chunks(&token);
-                match self
-                    .state
-                    .ckpt
-                    .commit(&target.prefix, barrier.step, chunks, true)
-                    .await
-                {
-                    Ok(manifest_key) => {
-                        self.state
-                            .coordinator
-                            .barriers
-                            .mark_committed(&token)
-                            .map_err(to_status)?;
-                        self.state.drop_reported(&token);
-                        tracing::info!(step = barrier.step, manifest = %manifest_key, "checkpoint committed");
-                        Ok(Response::new(CommitCheckpointResponse {
-                            status: CommitStatus::Committed as i32,
-                            manifest_key,
-                        }))
-                    }
-                    Err(e @ DtrError::CheckpointCorrupt { .. }) => {
-                        tracing::error!(step = barrier.step, error = %e, "checkpoint verification failed; aborting");
-                        self.state
-                            .coordinator
-                            .barriers
-                            .abort(&token, e.to_string())
-                            .map_err(to_status)?;
-                        self.state.drop_reported(&token);
-                        Ok(Response::new(CommitCheckpointResponse {
-                            status: CommitStatus::Aborted as i32,
-                            manifest_key: String::new(),
-                        }))
-                    }
-                    Err(e) => Err(to_status(e)),
-                }
-            }
-        }
+        let start = std::time::Instant::now();
+        let res = self.commit_inner(request.into_inner()).await;
+        self.state.metrics.observe_rpc(
+            "CommitCheckpoint",
+            &crate::code_of(&res),
+            start.elapsed().as_secs_f64(),
+        );
+        res
     }
 
     async fn abort_checkpoint(
@@ -234,6 +171,7 @@ impl CheckpointService for CheckpointSvc {
             .abort(&token, req.reason)
             .map_err(to_status)?;
         self.state.drop_reported(&token);
+        self.state.metrics.checkpoint_aborts_total.inc();
         Ok(Response::new(AbortCheckpointResponse {}))
     }
 
@@ -277,6 +215,91 @@ impl CheckpointService for CheckpointSvc {
                 chunks: vec![],
                 committed_at: None,
             })),
+        }
+    }
+}
+
+impl CheckpointSvc {
+    async fn commit_inner(
+        &self,
+        req: CommitCheckpointRequest,
+    ) -> Result<Response<CommitCheckpointResponse>, Status> {
+        self.state
+            .auth(&req.worker_id, &req.session_token)
+            .map_err(to_status)?;
+        let token = CheckpointToken::new(&req.checkpoint_token);
+        let barrier = self
+            .state
+            .coordinator
+            .barriers
+            .get(&token)
+            .map_err(to_status)?;
+
+        match barrier.status {
+            BarrierStatus::Pending => Ok(Response::new(CommitCheckpointResponse {
+                status: CommitStatus::Pending as i32,
+                manifest_key: String::new(),
+            })),
+            BarrierStatus::Aborted => Ok(Response::new(CommitCheckpointResponse {
+                status: CommitStatus::Aborted as i32,
+                manifest_key: String::new(),
+            })),
+            BarrierStatus::Committed => {
+                // Idempotent re-commit: return the already-published manifest.
+                let target = self.state.target(&barrier.target_id).map_err(to_status)?;
+                Ok(Response::new(CommitCheckpointResponse {
+                    status: CommitStatus::Committed as i32,
+                    manifest_key: dtr_checkpoint::layout::manifest_key(
+                        &target.prefix,
+                        barrier.step,
+                    ),
+                }))
+            }
+            BarrierStatus::Ready => {
+                let target = self.state.target(&barrier.target_id).map_err(to_status)?;
+                let chunks = self.state.reported_chunks(&token);
+                let total_bytes: u64 = chunks.iter().map(|c| c.size_bytes).sum();
+                match self
+                    .state
+                    .ckpt
+                    .commit(&target.prefix, barrier.step, chunks, true)
+                    .await
+                {
+                    Ok(manifest_key) => {
+                        self.state
+                            .coordinator
+                            .barriers
+                            .mark_committed(&token)
+                            .map_err(to_status)?;
+                        self.state.drop_reported(&token);
+                        self.state.metrics.checkpoint_commits_total.inc();
+                        self.state
+                            .metrics
+                            .checkpoint_bytes_total
+                            .inc_by(total_bytes);
+                        tracing::info!(step = barrier.step, manifest = %manifest_key, bytes = total_bytes, "checkpoint committed");
+                        Ok(Response::new(CommitCheckpointResponse {
+                            status: CommitStatus::Committed as i32,
+                            manifest_key,
+                        }))
+                    }
+                    Err(e @ DtrError::CheckpointCorrupt { .. }) => {
+                        tracing::error!(step = barrier.step, error = %e, "checkpoint verification failed; aborting");
+                        self.state
+                            .coordinator
+                            .barriers
+                            .abort(&token, e.to_string())
+                            .map_err(to_status)?;
+                        self.state.drop_reported(&token);
+                        self.state.metrics.checkpoint_aborts_total.inc();
+                        Ok(Response::new(CommitCheckpointResponse {
+                            status: CommitStatus::Aborted as i32,
+                            manifest_key: String::new(),
+                        }))
+                    }
+                    Err(e) => Err(to_status(e)),
+                }
+            }
         }
     }
 }

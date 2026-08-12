@@ -50,23 +50,28 @@ impl RuntimeService for RuntimeSvc {
         &self,
         request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
-        let req = request.into_inner();
-        let result = self.state.coordinator.membership.heartbeat(
-            &WorkerId::new(&req.worker_id),
-            &req.session_token,
-            req.current_step,
+        let start = std::time::Instant::now();
+        let res = self.heartbeat_inner(request.into_inner()).await;
+        self.state.metrics.observe_rpc(
+            "Heartbeat",
+            &crate::code_of(&res),
+            start.elapsed().as_secs_f64(),
         );
-        let must_reregister = match result {
-            Ok(()) => false,
-            // Evicted or restarted coordinator: instruct re-registration
-            // instead of erroring — recovery is protocol-driven.
-            Err(DtrError::UnknownWorker(_)) => true,
-            Err(e) => return Err(to_status(e)),
-        };
-        Ok(Response::new(HeartbeatResponse {
-            must_reregister,
-            server_time: Some(timestamp_after(0)),
-        }))
+        res
+    }
+
+    async fn acquire_shard_lease(
+        &self,
+        request: Request<AcquireShardLeaseRequest>,
+    ) -> Result<Response<AcquireShardLeaseResponse>, Status> {
+        let start = std::time::Instant::now();
+        let res = self.acquire_inner(request.into_inner()).await;
+        self.state.metrics.observe_rpc(
+            "AcquireShardLease",
+            &crate::code_of(&res),
+            start.elapsed().as_secs_f64(),
+        );
+        res
     }
 
     async fn register_dataset(
@@ -92,47 +97,6 @@ impl RuntimeService for RuntimeSvc {
         Ok(Response::new(RegisterDatasetResponse {
             dataset_id: dataset_id.to_string(),
             already_registered: already,
-        }))
-    }
-
-    async fn acquire_shard_lease(
-        &self,
-        request: Request<AcquireShardLeaseRequest>,
-    ) -> Result<Response<AcquireShardLeaseResponse>, Status> {
-        let req = request.into_inner();
-        let worker = self
-            .state
-            .auth(&req.worker_id, &req.session_token)
-            .map_err(to_status)?;
-        let lease = self
-            .state
-            .coordinator
-            .leases
-            .acquire(
-                worker,
-                &DatasetId::new(&req.dataset_id),
-                req.epoch,
-                req.requested_shards,
-            )
-            .map_err(to_status)?;
-        let ttl = self.state.coordinator.leases.ttl_ms();
-        Ok(Response::new(match lease {
-            Some(lease) => AcquireShardLeaseResponse {
-                lease_id: lease.lease_id.to_string(),
-                shards: Some(ShardRange {
-                    begin: lease.shards.begin,
-                    end: lease.shards.end,
-                }),
-                lease_ttl_ms: ttl,
-                expires_at: Some(timestamp_after(ttl)),
-            },
-            // Pool exhausted for this epoch: empty response by contract.
-            None => AcquireShardLeaseResponse {
-                lease_id: String::new(),
-                shards: None,
-                lease_ttl_ms: 0,
-                expires_at: None,
-            },
         }))
     }
 
@@ -183,5 +147,69 @@ impl RuntimeService for RuntimeSvc {
             }
             Err(e) => Err(to_status(e)),
         }
+    }
+}
+
+impl RuntimeSvc {
+    async fn heartbeat_inner(
+        &self,
+        req: HeartbeatRequest,
+    ) -> Result<Response<HeartbeatResponse>, Status> {
+        let result = self.state.coordinator.membership.heartbeat(
+            &WorkerId::new(&req.worker_id),
+            &req.session_token,
+            req.current_step,
+        );
+        let must_reregister = match result {
+            Ok(()) => false,
+            // Evicted or restarted coordinator: instruct re-registration
+            // instead of erroring — recovery is protocol-driven.
+            Err(DtrError::UnknownWorker(_)) => true,
+            Err(e) => return Err(to_status(e)),
+        };
+        Ok(Response::new(HeartbeatResponse {
+            must_reregister,
+            server_time: Some(timestamp_after(0)),
+        }))
+    }
+
+    async fn acquire_inner(
+        &self,
+        req: AcquireShardLeaseRequest,
+    ) -> Result<Response<AcquireShardLeaseResponse>, Status> {
+        let worker = self
+            .state
+            .auth(&req.worker_id, &req.session_token)
+            .map_err(to_status)?;
+        let lease = self
+            .state
+            .coordinator
+            .leases
+            .acquire(
+                worker,
+                &DatasetId::new(&req.dataset_id),
+                req.epoch,
+                req.requested_shards,
+            )
+            .map_err(to_status)?;
+        let ttl = self.state.coordinator.leases.ttl_ms();
+        Ok(Response::new(match lease {
+            Some(lease) => AcquireShardLeaseResponse {
+                lease_id: lease.lease_id.to_string(),
+                shards: Some(ShardRange {
+                    begin: lease.shards.begin,
+                    end: lease.shards.end,
+                }),
+                lease_ttl_ms: ttl,
+                expires_at: Some(timestamp_after(ttl)),
+            },
+            // Pool exhausted for this epoch: empty response by contract.
+            None => AcquireShardLeaseResponse {
+                lease_id: String::new(),
+                shards: None,
+                lease_ttl_ms: 0,
+                expires_at: None,
+            },
+        }))
     }
 }

@@ -23,6 +23,7 @@ pub struct TargetInfo {
 
 pub struct AppState {
     pub cfg: RuntimeConfig,
+    pub metrics: std::sync::Arc<crate::Metrics>,
     pub coordinator: Coordinator,
     pub storage: Arc<dyn Storage>,
     pub io: Arc<IoEngine>,
@@ -48,6 +49,7 @@ impl AppState {
         let ckpt = CheckpointStore::new(storage.clone());
         Self {
             cfg,
+            metrics: crate::Metrics::new(),
             coordinator,
             storage,
             io,
