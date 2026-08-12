@@ -191,6 +191,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dtr-io-engine"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "dtr-common",
+ "dtr-storage",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "dtr-storage"
 version = "0.1.0"
 dependencies = [
