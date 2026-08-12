@@ -1,0 +1,61 @@
+# Helm values overlay for GCP GKE + GCS (via the S3-compatible endpoint) with
+# Workload Identity.
+#
+#   helm upgrade --install dtr-runtime helm/dtr-runtime -n dtr -f config/gke.yaml \
+#     --set-string serviceAccount.annotations."iam\.gke\.io/gcp-service-account"=dtr@<project>.iam.gserviceaccount.com \
+#     --set env.S3_BUCKET=my-dtr-bucket
+#
+# GCS interoperability (storage.googleapis.com) speaks the S3 protocol with
+# HMAC keys; mount them via extraEnvFrom -> secret (S3_ACCESS_KEY/S3_SECRET_KEY).
+# A native GCS backend in the storage crate is the tracked follow-up
+# (docs/adr/0003-object-store-abstraction.md).
+
+replicaCount: 2
+
+serviceAccount:
+  create: true
+  name: dtr-runtime
+  annotations: {}   # set iam.gke.io/gcp-service-account at install time
+
+config:
+  runtime:
+    grpc_bind: "0.0.0.0:50051"
+    log_level: "info"
+    log_json: true
+  storage:
+    backend: s3
+    s3:
+      endpoint: "https://storage.googleapis.com"
+      region: auto
+      force_path_style: true
+      allow_http: false
+  coordinator:
+    heartbeat_interval_ms: 5000
+    missed_heartbeats_allowed: 3
+    lease_ttl_ms: 60000
+    default_shards_per_lease: 1
+  checkpoint:
+    quorum:
+      policy: all_ranks
+    barrier_timeout_ms: 600000
+    default_chunk_bytes: 67108864
+    gc_orphan_after_ms: 3600000
+  io:
+    cache_bytes: 8589934592
+    prefetch_depth: 8
+  observability:
+    metrics_bind: "0.0.0.0:9090"
+
+env:
+  S3_BUCKET: dtr
+
+extraEnvFrom:
+  - secretRef:
+      name: dtr-gcs-hmac   # S3_ACCESS_KEY / S3_SECRET_KEY interop keys
+
+resources:
+  requests:
+    cpu: "2"
+    memory: 10Gi
+  limits:
+    memory: 12Gi

@@ -1,0 +1,66 @@
+# Helm values overlay for Azure AKS + Blob storage via an S3-compatible
+# gateway (e.g. MinIO Azure Gateway) with Azure AD Workload Identity.
+#
+#   helm upgrade --install dtr-runtime helm/dtr-runtime -n dtr -f config/aks.yaml \
+#     --set-string serviceAccount.annotations."azure\.workload\.identity/client-id"=<client-id> \
+#     --set config.storage.s3.endpoint=http://minio-gateway.dtr.svc:9000
+#
+# A native Azure Blob backend in the storage crate is the tracked follow-up
+# (docs/adr/0003-object-store-abstraction.md). Avoid SAS tokens; use
+# workload identity on the gateway.
+
+replicaCount: 2
+
+serviceAccount:
+  create: true
+  name: dtr-runtime
+  annotations: {}   # set azure.workload.identity/client-id at install time
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: /metrics
+  azure.workload.identity/use: "true"
+
+config:
+  runtime:
+    grpc_bind: "0.0.0.0:50051"
+    log_level: "info"
+    log_json: true
+  storage:
+    backend: s3
+    s3:
+      endpoint: "http://minio-gateway.dtr.svc:9000"
+      region: auto
+      force_path_style: true
+      allow_http: true      # in-cluster gateway; enable TLS for cross-cluster
+  coordinator:
+    heartbeat_interval_ms: 5000
+    missed_heartbeats_allowed: 3
+    lease_ttl_ms: 60000
+    default_shards_per_lease: 1
+  checkpoint:
+    quorum:
+      policy: all_ranks
+    barrier_timeout_ms: 600000
+    default_chunk_bytes: 67108864
+    gc_orphan_after_ms: 3600000
+  io:
+    cache_bytes: 8589934592
+    prefetch_depth: 8
+  observability:
+    metrics_bind: "0.0.0.0:9090"
+
+env:
+  S3_BUCKET: dtr
+
+extraEnvFrom:
+  - secretRef:
+      name: dtr-gateway-credentials
+
+resources:
+  requests:
+    cpu: "2"
+    memory: 10Gi
+  limits:
+    memory: 12Gi

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: dtr-runtime
+description: Distributed Training Data & Checkpoint Runtime coordinator
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [ml, training, checkpoint, data-loading]
+sources:
+  - https://github.com/AmosBunde/Distributed-Training-Data-Checkpoint-Runtime

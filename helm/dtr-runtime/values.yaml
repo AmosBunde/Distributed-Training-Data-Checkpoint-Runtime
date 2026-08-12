@@ -1,0 +1,89 @@
+# Default values for dtr-runtime. Cloud profiles override via -f config/<cloud>.yaml
+# style values files (see values-*.yaml examples in this chart's docs).
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/amosbunde/dtr-runtime
+  tag: ""            # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: dtr-runtime
+  # Workload identity bindings, e.g.:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/dtr-s3
+  #   iam.gke.io/gcp-service-account: dtr@project.iam.gserviceaccount.com
+  #   azure.workload.identity/client-id: <client-id>
+  annotations: {}
+
+service:
+  type: ClusterIP
+  grpcPort: 50051
+  metricsPort: 9090
+
+# Runtime configuration rendered into the ConfigMap (mounted as
+# /app/config/config.yaml). Env vars below still take precedence.
+config:
+  runtime:
+    grpc_bind: "0.0.0.0:50051"
+    log_level: "info"
+    log_json: true
+  storage:
+    backend: s3
+    s3:
+      endpoint: null          # null = real AWS S3 / native endpoint
+      region: us-east-1
+      force_path_style: false
+      allow_http: false
+  coordinator:
+    heartbeat_interval_ms: 5000
+    missed_heartbeats_allowed: 3
+    lease_ttl_ms: 60000
+    default_shards_per_lease: 1
+  checkpoint:
+    quorum:
+      policy: all_ranks
+    barrier_timeout_ms: 600000
+    default_chunk_bytes: 67108864
+    gc_orphan_after_ms: 3600000
+  io:
+    cache_bytes: 4294967296
+    prefetch_depth: 4
+  observability:
+    metrics_bind: "0.0.0.0:9090"
+
+# Extra environment (e.g. S3_BUCKET) and secret-backed credentials.
+env:
+  S3_BUCKET: dtr
+extraEnvFrom: []
+#  - secretRef:
+#      name: dtr-s3-credentials
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 4Gi
+  limits:
+    memory: 8Gi
+
+# The IO cache lives in memory; keep memory limit >= config.io.cache_bytes + 1Gi.
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
