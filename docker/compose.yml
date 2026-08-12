@@ -8,6 +8,11 @@
 #                live in the single 'dtr' bucket)
 #   prometheus - scrapes runtime metrics (:9091 on the host)
 #   grafana    - provisioned dashboard (:3000, admin/admin)
+#
+# SECURITY: this stack is for LOCAL DEVELOPMENT ONLY. It uses well-known
+# default credentials (minioadmin / admin) and plaintext gRPC. All published
+# ports are bound to 127.0.0.1 so nothing is reachable from other hosts.
+# Never point these defaults at real data or expose them beyond localhost.
 
 name: dtr
 
@@ -31,8 +36,8 @@ services:
       S3_REGION: "us-east-1"
       S3_BUCKET: "dtr"
     ports:
-      - "50051:50051"   # gRPC
-      - "9090:9090"     # /metrics + /healthz
+      - "127.0.0.1:50051:50051"   # gRPC
+      - "127.0.0.1:9090:9090"     # /metrics + /healthz
     restart: unless-stopped
 
   minio:
@@ -42,8 +47,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -69,7 +74,7 @@ services:
     volumes:
       - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
-      - "9091:9090"
+      - "127.0.0.1:9091:9090"
     depends_on:
       - runtime
 
@@ -82,7 +87,7 @@ services:
       - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
 
