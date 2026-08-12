@@ -1,0 +1,154 @@
+// Control-plane contract for the Distributed Training Data & Checkpoint Runtime.
+//
+// RuntimeService is the coordinator-facing API used by training workers (via the
+// Python SDK) to join the job, stay alive, and lease dataset shards.
+//
+// Versioning policy: this is package v1. Field numbers are frozen once released;
+// evolve by adding fields, never by renumbering or retyping.
+
+syntax = "proto3";
+
+package dtr.runtime.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------------------
+// Worker membership
+// ---------------------------------------------------------------------------
+
+message RegisterWorkerRequest {
+  // Stable identity chosen by the trainer, e.g. "rank-0". Unique per job.
+  string worker_id = 1;
+  // Rank within the training job (0-based).
+  uint32 rank = 2;
+  // Total world size the trainer believes it is part of.
+  uint32 world_size = 3;
+  // Free-form labels (hostname, pod name, GPU type) for observability.
+  map<string, string> labels = 4;
+}
+
+message RegisterWorkerResponse {
+  // Session token the worker must present on subsequent calls.
+  string session_token = 1;
+  // How often the worker must heartbeat before it is considered dead.
+  uint64 heartbeat_interval_ms = 2;
+  // Deadline multiplier: missing this many intervals evicts the worker.
+  uint32 missed_heartbeats_allowed = 3;
+}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  // Optional progress marker for observability (current step).
+  uint64 current_step = 3;
+}
+
+message HeartbeatResponse {
+  // Server may instruct the worker to re-register (e.g. after coordinator restart).
+  bool must_reregister = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Dataset registration
+// ---------------------------------------------------------------------------
+
+message DatasetSpec {
+  // Storage URI prefix holding the shards, e.g. "s3://datasets/imagenet-shards/"
+  // or "file:///mnt/datasets/imagenet/".
+  string uri = 1;
+  // Shard container format hint (e.g. "webdataset", "tfrecord", "parquet").
+  string shard_format = 2;
+  // Total number of shards under the prefix.
+  uint32 num_shards = 3;
+  // Whether shard assignment order is shuffled per epoch.
+  bool shuffle = 4;
+  // Optional seed making the per-epoch shuffle deterministic across workers.
+  uint64 shuffle_seed = 5;
+}
+
+message RegisterDatasetRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  DatasetSpec spec = 3;
+}
+
+message RegisterDatasetResponse {
+  // Coordinator-assigned handle used in lease calls.
+  string dataset_id = 1;
+  // True if the dataset was already registered (idempotent re-registration).
+  bool already_registered = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Shard leasing
+// ---------------------------------------------------------------------------
+
+// A contiguous half-open range of shard indices [begin, end).
+message ShardRange {
+  uint32 begin = 1;
+  uint32 end = 2;
+}
+
+message AcquireShardLeaseRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string dataset_id = 3;
+  // Epoch the worker is entering; the coordinator plans assignment per epoch.
+  uint64 epoch = 4;
+  // How many shards the worker wants in this lease (coordinator may grant fewer).
+  uint32 requested_shards = 5;
+}
+
+message AcquireShardLeaseResponse {
+  // Empty shard range with lease_id == "" means the epoch pool is exhausted.
+  string lease_id = 1;
+  ShardRange shards = 2;
+  // Wall-clock TTL; the worker must renew before expiry or shards return
+  // to the pool for reassignment.
+  uint64 lease_ttl_ms = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message RenewShardLeaseRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string lease_id = 3;
+}
+
+message RenewShardLeaseResponse {
+  google.protobuf.Timestamp expires_at = 1;
+  // False when the lease already expired and was reassigned; the worker must
+  // stop reading those shards and acquire a fresh lease.
+  bool renewed = 2;
+}
+
+message ReleaseShardLeaseRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string lease_id = 3;
+  // True when the worker fully consumed the shard range.
+  bool completed = 4;
+}
+
+message ReleaseShardLeaseResponse {}
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service RuntimeService {
+  // Join the job. Idempotent for the same (worker_id, rank).
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+
+  // Liveness signal; drives lease expiry and membership eviction.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Register (or look up) a dataset and its shard layout.
+  rpc RegisterDataset(RegisterDatasetRequest) returns (RegisterDatasetResponse);
+
+  // Lease a shard range for reading. Leases are TTL-bound and renewable.
+  rpc AcquireShardLease(AcquireShardLeaseRequest) returns (AcquireShardLeaseResponse);
+  rpc RenewShardLease(RenewShardLeaseRequest) returns (RenewShardLeaseResponse);
+  rpc ReleaseShardLease(ReleaseShardLeaseRequest) returns (ReleaseShardLeaseResponse);
+}
