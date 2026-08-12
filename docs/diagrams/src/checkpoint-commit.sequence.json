@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Checkpoint Atomic Commit",
+    "subtitle": "Barrier open \u2192 parallel chunk uploads \u2192 integrity reports \u2192 verify-then-publish manifest",
+    "output": "checkpoint-commit-sequence.html",
+    "viewBox": [
+      860,
+      980
+    ],
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "barrier",
+        "label": "Open the barrier",
+        "focus": [
+          "rank0",
+          "rankN",
+          "ckptsvc",
+          "barrierm"
+        ],
+        "note": "BeginCheckpoint is idempotent per (target, step): every rank receives the same token."
+      },
+      {
+        "id": "upload",
+        "label": "Upload + report",
+        "focus": [
+          "rank0",
+          "datasvc",
+          "store",
+          "ckptsvc"
+        ],
+        "note": "Chunk bytes go to tmp/ via the data plane; only SHA-256 metadata flows through the control plane."
+      },
+      {
+        "id": "commit",
+        "label": "Verify then publish",
+        "focus": [
+          "ckptsvc",
+          "barrierm",
+          "store"
+        ],
+        "note": "The manifest PUT is the single atomic visibility flip; partial uploads never publish."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "rank0",
+      "type": "external",
+      "label": "Rank 0",
+      "sublabel": "dtr SDK"
+    },
+    {
+      "id": "rankN",
+      "type": "external",
+      "label": "Rank N",
+      "sublabel": "dtr SDK"
+    },
+    {
+      "id": "ckptsvc",
+      "type": "backend",
+      "label": "CheckpointSvc",
+      "sublabel": "gRPC"
+    },
+    {
+      "id": "barrierm",
+      "type": "backend",
+      "label": "Barrier",
+      "sublabel": "quorum + deadline"
+    },
+    {
+      "id": "datasvc",
+      "type": "backend",
+      "label": "DataService",
+      "sublabel": "chunk proxy"
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "Object Store",
+      "sublabel": "tmp/ + manifests/"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 328,
+      "label": "Barrier"
+    },
+    {
+      "from": 346,
+      "to": 620,
+      "label": "Upload + report"
+    },
+    {
+      "from": 638,
+      "to": 900,
+      "label": "Commit"
+    }
+  ],
+  "messages": [
+    {
+      "from": "rank0",
+      "to": "ckptsvc",
+      "y": 180,
+      "label": "BeginCheckpoint(step)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "barrierm",
+      "y": 222,
+      "label": "begin (open-or-join)",
+      "variant": "default"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "rank0",
+      "y": 264,
+      "label": "token \u00b7 tmp prefix \u00b7 quorum",
+      "variant": "return"
+    },
+    {
+      "from": "rankN",
+      "to": "ckptsvc",
+      "y": 306,
+      "label": "BeginCheckpoint(step) \u2192 same token",
+      "variant": "dashed"
+    },
+    {
+      "from": "rank0",
+      "to": "datasvc",
+      "y": 376,
+      "label": "UploadCheckpointChunk (stream)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "datasvc",
+      "to": "store",
+      "y": 418,
+      "label": "PUT tmp/ckpt-step-N/rank-0.part-i",
+      "variant": "emphasis"
+    },
+    {
+      "from": "datasvc",
+      "to": "rank0",
+      "y": 460,
+      "label": "server SHA-256 (client cross-checks)",
+      "variant": "return"
+    },
+    {
+      "from": "rank0",
+      "to": "ckptsvc",
+      "y": 502,
+      "label": "ReportChunk(rank_complete)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "barrierm",
+      "y": 544,
+      "label": "rank_complete(rank)",
+      "variant": "default"
+    },
+    {
+      "from": "barrierm",
+      "to": "ckptsvc",
+      "y": 586,
+      "label": "quorum met \u2192 Ready",
+      "variant": "return"
+    },
+    {
+      "from": "rank0",
+      "to": "ckptsvc",
+      "y": 668,
+      "label": "CommitCheckpoint (poll)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "store",
+      "y": 710,
+      "label": "HEAD + re-hash every reported chunk",
+      "variant": "default"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "store",
+      "y": 752,
+      "label": "PUT manifests/step-N.json",
+      "variant": "emphasis"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "store",
+      "y": 794,
+      "label": "PUT latest.json (best-effort)",
+      "variant": "dashed"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "barrierm",
+      "y": 836,
+      "label": "mark_committed",
+      "variant": "default"
+    },
+    {
+      "from": "ckptsvc",
+      "to": "rank0",
+      "y": 878,
+      "label": "COMMITTED + manifest key",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "ckptsvc",
+      "from": 174,
+      "to": 316,
+      "type": "backend"
+    },
+    {
+      "participant": "barrierm",
+      "from": 216,
+      "to": 232,
+      "type": "backend"
+    },
+    {
+      "participant": "datasvc",
+      "from": 370,
+      "to": 468,
+      "type": "backend"
+    },
+    {
+      "participant": "store",
+      "from": 412,
+      "to": 428,
+      "type": "database"
+    },
+    {
+      "participant": "ckptsvc",
+      "from": 496,
+      "to": 594,
+      "type": "backend"
+    },
+    {
+      "participant": "barrierm",
+      "from": 538,
+      "to": 592,
+      "type": "backend"
+    },
+    {
+      "participant": "ckptsvc",
+      "from": 662,
+      "to": 886,
+      "type": "backend"
+    },
+    {
+      "participant": "store",
+      "from": 704,
+      "to": 800,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Barrier semantics",
+      "items": [
+        "begin is open-or-join: one token per (target, step)",
+        "Quorum policy: all ranks or a fraction",
+        "Deadline abort is applied lazily on every access"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Integrity chain",
+      "items": [
+        "Client hash \u27f7 server hash on every chunk upload",
+        "Commit re-verifies existence, size, and SHA-256 in storage",
+        "Verification failure auto-aborts the barrier with a reason"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Atomicity",
+      "items": [
+        "The manifest PUT is the only visibility flip",
+        "latest.json is a lossy pointer; scan of manifests/ is the authority",
+        "Re-commit after success is idempotent"
+      ]
+    }
+  ]
+}
