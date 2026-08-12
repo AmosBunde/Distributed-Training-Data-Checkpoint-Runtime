@@ -1,0 +1,90 @@
+# Local development stack:
+#   docker compose -f docker/compose.yml up -d
+#
+# Services:
+#   runtime    - DTR runtime server (gRPC :50051, metrics :9090)
+#   minio      - S3-compatible object store (API :9000, console :9001)
+#   minio-init - one-shot bucket bootstrap (datasets/, checkpoints/ prefixes
+#                live in the single 'dtr' bucket)
+#   prometheus - scrapes runtime metrics (:9091 on the host)
+#   grafana    - provisioned dashboard (:3000, admin/admin)
+
+name: dtr
+
+services:
+  runtime:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.runtime
+    image: dtr-runtime:dev
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      RUNTIME_BIND_ADDR: "0.0.0.0:50051"
+      METRICS_BIND_ADDR: "0.0.0.0:9090"
+      LOG_LEVEL: "info"
+      STORAGE_BACKEND: "s3"
+      S3_ENDPOINT: "http://minio:9000"
+      S3_ACCESS_KEY: "minioadmin"
+      S3_SECRET_KEY: "minioadmin"
+      S3_REGION: "us-east-1"
+      S3_BUCKET: "dtr"
+    ports:
+      - "50051:50051"   # gRPC
+      - "9090:9090"     # /metrics + /healthz
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb -p local/dtr &&
+        mc ls local/
+      "
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"
+    depends_on:
+      - runtime
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  minio-data:

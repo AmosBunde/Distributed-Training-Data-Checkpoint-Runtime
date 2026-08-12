@@ -1,0 +1,39 @@
+# Multi-stage build for the DTR runtime server.
+#
+#   docker build -f docker/Dockerfile.runtime -t dtr-runtime:dev .
+#
+# Stage 1 compiles with the full Rust toolchain; stage 2 is a slim Debian
+# image containing only the binary, a non-root user, and CA certificates
+# (needed for TLS to real S3 endpoints).
+
+FROM rust:1.91-slim-bookworm AS builder
+WORKDIR /build
+
+# Dependency layer: workspace manifests first so `cargo build` layers cache
+# until a Cargo.toml or lock changes.
+COPY runtime/Cargo.toml runtime/Cargo.lock ./runtime/
+COPY runtime/crates ./runtime/crates
+COPY runtime/bin ./runtime/bin
+COPY proto ./proto
+
+RUN cd runtime && cargo build --release --bin runtime-server
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --home /app dtr
+
+WORKDIR /app
+COPY --from=builder /build/runtime/target/release/runtime-server /usr/local/bin/runtime-server
+COPY config/local.yaml /app/config/local.yaml
+
+USER dtr
+EXPOSE 50051 9090
+
+# /healthz on the metrics port doubles as the container healthcheck.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:9090/healthz || exit 1
+
+ENTRYPOINT ["/usr/local/bin/runtime-server"]
+CMD ["--config", "/app/config/local.yaml"]

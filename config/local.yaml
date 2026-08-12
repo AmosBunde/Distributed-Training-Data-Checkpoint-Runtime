@@ -1,0 +1,33 @@
+# Local development profile: fs backend under /tmp, human-readable logs.
+# Env vars (RUNTIME_BIND_ADDR, STORAGE_BACKEND, S3_*, METRICS_BIND_ADDR,
+# LOG_LEVEL) override any value here — the compose stack uses that to switch
+# this same file to the MinIO S3 backend.
+runtime:
+  grpc_bind: "0.0.0.0:50051"
+  log_level: "info"
+  log_json: false
+
+storage:
+  backend: fs
+  fs:
+    root_dir: "/tmp/dtr"
+
+coordinator:
+  heartbeat_interval_ms: 5000
+  missed_heartbeats_allowed: 3
+  lease_ttl_ms: 60000
+  default_shards_per_lease: 1
+
+checkpoint:
+  quorum:
+    policy: all_ranks
+  barrier_timeout_ms: 600000
+  default_chunk_bytes: 67108864
+  gc_orphan_after_ms: 3600000
+
+io:
+  cache_bytes: 1073741824
+  prefetch_depth: 4
+
+observability:
+  metrics_bind: "0.0.0.0:9090"
