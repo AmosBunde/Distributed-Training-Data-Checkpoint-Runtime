@@ -100,12 +100,20 @@ impl IoEngine {
     /// in `shard_keys`. Fire-and-forget: spawns background fetches and returns
     /// the number of fetches started.
     pub fn prefetch(self: &Arc<Self>, shard_keys: &[String], cursor: usize) -> usize {
-        let mut started = 0;
-        for key in shard_keys
+        let upcoming: Vec<String> = shard_keys
             .iter()
             .skip(cursor + 1)
             .take(self.prefetch_depth as usize)
-        {
+            .cloned()
+            .collect();
+        self.prefetch_keys(&upcoming)
+    }
+
+    /// Warm the cache with exactly these keys (client-supplied hint list),
+    /// capped at `prefetch_depth`. Fire-and-forget like [`Self::prefetch`].
+    pub fn prefetch_keys(self: &Arc<Self>, keys: &[String]) -> usize {
+        let mut started = 0;
+        for key in keys.iter().take(self.prefetch_depth as usize) {
             if self.cache.contains(key) {
                 continue;
             }

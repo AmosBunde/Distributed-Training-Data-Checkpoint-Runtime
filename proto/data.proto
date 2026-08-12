@@ -1,0 +1,100 @@
+// Data-plane contract for the Distributed Training Data & Checkpoint Runtime.
+//
+// DataService is the byte-moving API for workers that do NOT have direct
+// storage credentials (the common Kubernetes posture: only the runtime's
+// service account holds bucket IAM). Reads are served through the runtime's
+// IO engine (cache + prefetch); checkpoint chunk uploads land in the tmp
+// area and are verified at commit exactly like direct-to-storage uploads.
+//
+// Workers that DO have storage access may bypass this service entirely and
+// only speak the control-plane contracts (runtime.proto, checkpoint.proto).
+
+syntax = "proto3";
+
+package dtr.data.v1;
+
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
+
+message ListObjectsRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  // Storage key prefix, e.g. "datasets/imagenet-shards".
+  string prefix = 3;
+}
+
+message ObjectInfo {
+  string key = 1;
+  uint64 size_bytes = 2;
+}
+
+message ListObjectsResponse {
+  repeated ObjectInfo objects = 1;
+}
+
+message ReadObjectRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string key = 3;
+  // Byte offset to start from (0 = beginning).
+  uint64 offset = 4;
+  // Bytes to read (0 = to end of object).
+  uint64 length = 5;
+  // Preferred size of streamed frames (0 = server default, 1 MiB).
+  uint64 frame_bytes = 6;
+  // Keys the worker will read next; the server prefetches them.
+  repeated string prefetch_hint = 7;
+}
+
+message ObjectFrame {
+  // Offset of this frame within the object.
+  uint64 offset = 1;
+  bytes data = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoint chunk upload (proxy path)
+// ---------------------------------------------------------------------------
+
+message UploadChunkHeader {
+  string worker_id = 1;
+  string session_token = 2;
+  // Barrier token from CheckpointService.BeginCheckpoint.
+  string checkpoint_token = 3;
+  uint32 rank = 4;
+  uint32 part_index = 5;
+}
+
+message UploadChunkRequest {
+  oneof msg {
+    // First frame of the stream.
+    UploadChunkHeader header = 1;
+    // Subsequent frames carry data.
+    bytes data = 2;
+  }
+}
+
+message UploadChunkResponse {
+  // Storage key the chunk landed at (tmp area).
+  string key = 1;
+  uint64 size_bytes = 2;
+  // Server-computed SHA-256 — the client should verify it matches its own
+  // hash before calling CheckpointService.ReportChunk.
+  string sha256 = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service DataService {
+  // Enumerate shard objects under a prefix.
+  rpc ListObjects(ListObjectsRequest) returns (ListObjectsResponse);
+
+  // Stream an object (or byte range) through the runtime's cache.
+  rpc ReadObject(ReadObjectRequest) returns (stream ObjectFrame);
+
+  // Stream one checkpoint chunk into the tmp area for the given barrier.
+  rpc UploadCheckpointChunk(stream UploadChunkRequest) returns (UploadChunkResponse);
+}
