@@ -19,6 +19,8 @@ tokio.workspace = true
 tokio-stream = "0.1"
 bytes.workspace = true
 tracing.workspace = true
+prometheus.workspace = true
+axum.workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true

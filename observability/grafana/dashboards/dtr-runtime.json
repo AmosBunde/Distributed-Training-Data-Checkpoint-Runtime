@@ -1,0 +1,87 @@
+{
+  "title": "DTR Runtime",
+  "uid": "dtr-runtime",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "RPC latency p95 (s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(dtr_rpc_latency_seconds_bucket[5m])) by (le, method))",
+          "legendFormat": "{{method}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "RPC rate by outcome",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(dtr_rpc_total[5m])) by (method, code)",
+          "legendFormat": "{{method}} {{code}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Live workers",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 8 },
+      "targets": [{ "expr": "dtr_workers_live" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active leases",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 8 },
+      "targets": [{ "expr": "dtr_leases_active" }]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Cache hit ratio",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1, "min": 0 } },
+      "targets": [{ "expr": "dtr_io_cache_hit_ratio" }]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Checkpoint commits / aborts",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        { "expr": "dtr_checkpoint_commits_total", "legendFormat": "commits" },
+        { "expr": "dtr_checkpoint_aborts_total", "legendFormat": "aborts" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Backend read throughput (B/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [
+        { "expr": "rate(dtr_io_backend_read_bytes_total[5m])", "legendFormat": "backend reads" },
+        { "expr": "rate(dtr_io_served_bytes_total[5m])", "legendFormat": "served to workers" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Failure signals",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        { "expr": "rate(dtr_worker_evictions_total[5m])", "legendFormat": "worker evictions" },
+        { "expr": "rate(dtr_lease_expirations_total[5m])", "legendFormat": "lease expirations" },
+        { "expr": "rate(dtr_checkpoint_aborts_total[5m])", "legendFormat": "checkpoint aborts" }
+      ]
+    }
+  ]
+}

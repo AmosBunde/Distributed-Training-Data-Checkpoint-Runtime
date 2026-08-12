@@ -102,7 +102,7 @@ impl DataService for DataSvc {
                 let end = (sent + frame_bytes).min(data.len());
                 let frame = ObjectFrame {
                     offset: base_offset + sent as u64,
-                    data: data.slice(sent..end).to_vec().into(),
+                    data: data.slice(sent..end).to_vec(),
                 };
                 if tx.send(Ok(frame)).await.is_err() {
                     break; // client hung up

@@ -9,6 +9,7 @@
 //! [`to_status`]; the services themselves contain orchestration only —
 //! every rule lives in the coordinator/checkpoint/io crates.
 
+pub mod metrics;
 pub mod state;
 
 mod checkpoint_svc;
@@ -17,6 +18,7 @@ mod runtime_svc;
 
 pub use checkpoint_svc::CheckpointSvc;
 pub use data_svc::DataSvc;
+pub use metrics::Metrics;
 pub use runtime_svc::RuntimeSvc;
 pub use state::AppState;
 
@@ -50,6 +52,14 @@ pub fn to_status(err: DtrError) -> Status {
         DtrError::CheckpointCorrupt { .. } => Status::data_loss(err.to_string()),
         DtrError::CheckpointAborted { .. } => Status::aborted(err.to_string()),
         DtrError::InvalidArgument(_) => Status::invalid_argument(err.to_string()),
+    }
+}
+
+/// gRPC status label for RPC outcome metrics.
+pub(crate) fn code_of<T>(res: &Result<tonic::Response<T>, Status>) -> String {
+    match res {
+        Ok(_) => "ok".to_string(),
+        Err(status) => format!("{:?}", status.code()).to_lowercase(),
     }
 }
 
