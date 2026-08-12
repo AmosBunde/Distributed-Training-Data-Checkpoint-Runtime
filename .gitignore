@@ -1,0 +1,46 @@
+# --- Rust ---
+runtime/target/
+target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Protobuf generated (Rust generates into OUT_DIR; Python stubs are committed) ---
+# python/src/dtr/_proto/ is intentionally committed — see scripts/gen_protos.sh
+
+# --- Docker / local data ---
+docker/.data/
+.data/
+*.log
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# --- Benchmarks / profiling artifacts ---
+perf.data*
+flamegraph.svg
+benchmarks/results/
+
+# --- Secrets ---
+.env
+*.pem
+*.key
+!helm/**/*.key  # never expected, but keep the rule explicit
