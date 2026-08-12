@@ -114,6 +114,11 @@ impl Membership {
         self.workers.lock().unwrap().len()
     }
 
+    /// Snapshot of one worker's info (None if unknown/evicted).
+    pub fn get(&self, worker_id: &WorkerId) -> Option<WorkerInfo> {
+        self.workers.lock().unwrap().get(worker_id).cloned()
+    }
+
     /// World size as reported by the most recently registered worker (0 if none).
     pub fn expected_world_size(&self) -> u32 {
         self.workers

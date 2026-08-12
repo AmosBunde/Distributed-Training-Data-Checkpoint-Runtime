@@ -27,12 +27,13 @@ python3 -m grpc_tools.protoc \
   --python_out="$PY_OUT" \
   --grpc_python_out="$PY_OUT" \
   "$PROTO_DIR"/runtime.proto \
-  "$PROTO_DIR"/checkpoint.proto
+  "$PROTO_DIR"/checkpoint.proto \
+  "$PROTO_DIR"/data.proto
 
 # grpc_tools emits absolute imports (import runtime_pb2); rewrite them to be
 # package-relative so the stubs work inside dtr._proto.
-sed -i -E 's/^import (runtime|checkpoint)_pb2/from . import \1_pb2/' \
-  "$PY_OUT"/runtime_pb2_grpc.py "$PY_OUT"/checkpoint_pb2_grpc.py
+sed -i -E 's/^import (runtime|checkpoint|data)_pb2/from . import \1_pb2/' \
+  "$PY_OUT"/runtime_pb2_grpc.py "$PY_OUT"/checkpoint_pb2_grpc.py "$PY_OUT"/data_pb2_grpc.py
 
 touch "$PY_OUT/__init__.py"
 

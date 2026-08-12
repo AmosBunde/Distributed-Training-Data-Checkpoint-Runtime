@@ -6,6 +6,8 @@ members = [
     "crates/coordinator",
     "crates/io_engine",
     "crates/checkpoint",
+    "crates/api",
+    "bin/runtime-server",
 ]
 
 [workspace.package]
