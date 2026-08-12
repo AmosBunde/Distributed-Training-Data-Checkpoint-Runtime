@@ -1,0 +1,19 @@
+[package]
+name = "dtr-checkpoint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Crash-safe checkpoints: chunking, manifests, atomic commit, GC"
+
+[dependencies]
+dtr-common.workspace = true
+dtr-storage.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+tracing.workspace = true
