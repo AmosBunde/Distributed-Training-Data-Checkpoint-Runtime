@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/common",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/AmosBunde/Distributed-Training-Data-Checkpoint-Runtime"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Serialization / config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Errors & logging
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Storage
+object_store = { version = "0.11", features = ["aws"] }
+bytes = "1"
+url = "2"
+
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+tonic-build = "0.12"
+protoc-bin-vendored = "3"
+
+# Metrics
+prometheus = "0.13"
+axum = "0.7"
+
+# Misc
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3"
+
+# Internal crates
+dtr-common = { path = "crates/common" }
+dtr-storage = { path = "crates/storage" }
+dtr-coordinator = { path = "crates/coordinator" }
+dtr-io-engine = { path = "crates/io_engine" }
+dtr-checkpoint = { path = "crates/checkpoint" }
+dtr-api = { path = "crates/api" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
