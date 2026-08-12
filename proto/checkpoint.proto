@@ -1,0 +1,180 @@
+// Checkpoint contract for the Distributed Training Data & Checkpoint Runtime.
+//
+// CheckpointService drives the atomic-commit protocol described in
+// docs/adr/0004-manifest-based-atomic-commit.md:
+//
+//   1. BeginCheckpoint issues a barrier token for step N.
+//   2. Every participating rank uploads chunks to tmp/ckpt-step-N/ (data plane,
+//      direct to storage) and reports each chunk's checksum via ReportChunk.
+//   3. When the expected participant set is satisfied, CommitCheckpoint verifies
+//      the reported set against storage and publishes manifests/step-N.json,
+//      then updates the `latest` pointer.
+//
+// Partial uploads are invisible by construction: readers only ever trust the
+// manifest, never the tmp/ area.
+
+syntax = "proto3";
+
+package dtr.checkpoint.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------------------
+// Target registration
+// ---------------------------------------------------------------------------
+
+message CheckpointSpec {
+  // Storage URI prefix for this run's checkpoints,
+  // e.g. "s3://checkpoints/run-001/" or "file:///mnt/ckpt/run-001/".
+  string uri = 1;
+  // "atomic" is the only supported mode in v1 (write temp -> verify -> publish).
+  string write_mode = 2;
+  // Target chunk size in bytes for state uploads (e.g. 64 MiB).
+  uint64 chunk_bytes = 3;
+  // How many committed checkpoints to retain (0 = keep all).
+  uint32 keep_last = 4;
+}
+
+message RegisterCheckpointTargetRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  CheckpointSpec spec = 3;
+}
+
+message RegisterCheckpointTargetResponse {
+  string target_id = 1;
+  bool already_registered = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Barrier + chunk reporting
+// ---------------------------------------------------------------------------
+
+message BeginCheckpointRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string target_id = 3;
+  // Training step this checkpoint captures. All ranks must agree.
+  uint64 step = 4;
+}
+
+message BeginCheckpointResponse {
+  // Barrier token shared by all ranks for this step. Calling Begin twice for
+  // the same step returns the same token (idempotent).
+  string checkpoint_token = 1;
+  // Where this rank must upload its chunks (tmp area prefix).
+  string upload_prefix = 2;
+  // Ranks the coordinator expects to participate.
+  uint32 expected_participants = 3;
+  // Quorum policy resolved from config: number of ranks required to commit.
+  uint32 required_participants = 4;
+  // Server-side deadline after which the checkpoint is aborted.
+  google.protobuf.Timestamp barrier_deadline = 5;
+}
+
+// Metadata for one uploaded chunk. The data itself goes straight to storage
+// over the data plane; only integrity metadata flows through the coordinator.
+message ChunkMeta {
+  // Object key relative to the upload prefix, e.g. "rank-0.part-0003".
+  string key = 1;
+  uint64 size_bytes = 2;
+  // Lowercase hex SHA-256 of the chunk contents.
+  string sha256 = 3;
+  uint32 rank = 4;
+  uint32 part_index = 5;
+}
+
+message ReportChunkRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string checkpoint_token = 3;
+  repeated ChunkMeta chunks = 4;
+  // True when this rank has reported all of its chunks for this checkpoint.
+  bool rank_complete = 5;
+}
+
+message ReportChunkResponse {
+  // How many ranks have completed so far (for progress display).
+  uint32 completed_participants = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Commit / abort / read side
+// ---------------------------------------------------------------------------
+
+message CommitCheckpointRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string checkpoint_token = 3;
+}
+
+message CommitCheckpointResponse {
+  // Terminal state of the checkpoint after this call.
+  Status status = 1;
+  // Set when status == COMMITTED: storage key of the published manifest.
+  string manifest_key = 2;
+
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    // Not all required ranks reported yet; caller should retry after backoff.
+    PENDING = 1;
+    // Manifest verified and published.
+    COMMITTED = 2;
+    // Verification failed or barrier deadline passed; tmp data will be GC'd.
+    ABORTED = 3;
+  }
+}
+
+message AbortCheckpointRequest {
+  string worker_id = 1;
+  string session_token = 2;
+  string checkpoint_token = 3;
+  string reason = 4;
+}
+
+message AbortCheckpointResponse {}
+
+message GetLatestManifestRequest {
+  string target_id = 1;
+}
+
+message ManifestChunk {
+  string key = 1;
+  uint64 size_bytes = 2;
+  string sha256 = 3;
+  uint32 rank = 4;
+  uint32 part_index = 5;
+}
+
+message GetLatestManifestResponse {
+  // Empty step + no chunks when no checkpoint has been committed yet.
+  bool found = 1;
+  uint64 step = 2;
+  string manifest_key = 3;
+  repeated ManifestChunk chunks = 4;
+  google.protobuf.Timestamp committed_at = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+service CheckpointService {
+  rpc RegisterCheckpointTarget(RegisterCheckpointTargetRequest)
+      returns (RegisterCheckpointTargetResponse);
+
+  // Open (or join) the barrier for a step. Idempotent per (target, step).
+  rpc BeginCheckpoint(BeginCheckpointRequest) returns (BeginCheckpointResponse);
+
+  // Report uploaded chunk integrity metadata.
+  rpc ReportChunk(ReportChunkRequest) returns (ReportChunkResponse);
+
+  // Attempt to verify + publish the manifest once the quorum is satisfied.
+  rpc CommitCheckpoint(CommitCheckpointRequest) returns (CommitCheckpointResponse);
+
+  // Abandon a checkpoint attempt; tmp data becomes GC-eligible.
+  rpc AbortCheckpoint(AbortCheckpointRequest) returns (AbortCheckpointResponse);
+
+  // Recovery entry point: fetch the newest committed manifest.
+  rpc GetLatestManifest(GetLatestManifestRequest) returns (GetLatestManifestResponse);
+}
