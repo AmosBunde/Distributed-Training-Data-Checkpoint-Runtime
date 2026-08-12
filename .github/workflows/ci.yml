@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Build server (used by Python integration tests)
+        run: cargo build --bin runtime-server
+      - name: Upload server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-server
+          path: runtime/target/debug/runtime-server
+
+  python:
+    name: Python (ruff, pytest incl. e2e)
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install SDK with dev extras
+        run: pip install -e "python/[dev]"
+      - name: Lint
+        run: |
+          ruff check python/
+          ruff format --check python/
+      - name: Download server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-server
+          path: runtime/target/debug
+      - name: Run tests (unit + integration against the real server)
+        run: |
+          chmod +x runtime/target/debug/runtime-server
+          pytest -q python/tests
+
+  protos:
+    name: Protobuf (stub drift check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Regenerate Python stubs
+        run: |
+          pip install grpcio-tools
+          bash scripts/gen_protos.sh
+      - name: Fail if committed stubs drifted
+        run: |
+          if ! git diff --exit-code python/src/dtr/_proto/; then
+            echo "::error::Committed Python stubs are stale. Run scripts/gen_protos.sh and commit."
+            exit 1
+          fi
+
+  helm:
+    name: Helm (lint + template all profiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint
+        run: helm lint helm/dtr-runtime
+      - name: Template default + cloud profiles
+        run: |
+          helm template dtr helm/dtr-runtime > /dev/null
+          for profile in eks gke aks; do
+            helm template dtr helm/dtr-runtime -f config/$profile.yaml > /dev/null
+          done
+
+  docker:
+    name: Docker (build runtime image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.runtime
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
