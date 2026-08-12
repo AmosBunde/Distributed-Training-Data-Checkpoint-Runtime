@@ -1,0 +1,20 @@
+[package]
+name = "dtr-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Storage backends (local FS, S3-compatible) behind one async trait"
+
+[dependencies]
+dtr-common.workspace = true
+object_store.workspace = true
+bytes.workspace = true
+url.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
